@@ -32,17 +32,66 @@ $lb.Location = New-Object Drawing.Point(20, 75)
 $lb.Size = New-Object Drawing.Size(380, 120)
 $form.Controls.Add($lb)
 
+$chkIPv6 = New-Object Windows.Forms.CheckBox
+$chkIPv6.Text = "IPv6 activé"
+$chkIPv6.Location = New-Object Drawing.Point(20, 200)
+$chkIPv6.AutoSize = $true
+$chkIPv6.Enabled = $false
+$chkIPv6.Add_Click({
+    if (-not $lb.SelectedItem) { return }
+    $alias = ($lb.SelectedItem -split ' \[ID:')[0]
+    try {
+        if ($chkIPv6.Checked) {
+            Enable-NetAdapterBinding -Name $alias -ComponentID ms_tcpip6
+        } else {
+            Disable-NetAdapterBinding -Name $alias -ComponentID ms_tcpip6
+        }
+    } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
+})
+$form.Controls.Add($chkIPv6)
+
+$btnIPv6Info = New-Object Windows.Forms.Button
+$btnIPv6Info.Text = "i"
+$btnIPv6Info.Size = New-Object Drawing.Size(20, 20)
+$btnIPv6Info.Location = New-Object Drawing.Point(120, 200)
+$btnIPv6Info.Font = New-Object Drawing.Font("Segoe UI", 7, [System.Drawing.FontStyle]::Bold)
+$btnIPv6Info.FlatStyle = "Flat"
+$btnIPv6Info.Add_Click({
+    [Windows.Forms.MessageBox]::Show(
+        "Désactiver l'IPv6 sur une interface force Windows à utiliser uniquement l'IPv4 pour le routage sur cette carte.`n`nCela peut aider à forcer la priorité réseau car Windows utilise parfois l'IPv6 pour router le trafic, contournant les métriques IPv4.`n`nImpact :`n- Aucun impact sur la majorité des usages (web, jeux, etc.)`n- Peut empêcher certains services locaux utilisant exclusivement IPv6`n- Réversible à tout moment en recochant la case",
+        "IPv6 - Information",
+        [Windows.Forms.MessageBoxButtons]::OK,
+        [Windows.Forms.MessageBoxIcon]::Information)
+})
+$form.Controls.Add($btnIPv6Info)
+
+$lb.Add_SelectedIndexChanged({
+    if ($lb.SelectedItem) {
+        $alias = ($lb.SelectedItem -split ' \[ID:')[0]
+        $chkIPv6.Enabled = $true
+        try {
+            $binding = Get-NetAdapterBinding -Name $alias -ComponentID ms_tcpip6 -ErrorAction Stop
+            $chkIPv6.Checked = $binding.Enabled
+        } catch {
+            $chkIPv6.Checked = $false
+            $chkIPv6.Enabled = $false
+        }
+    } else {
+        $chkIPv6.Enabled = $false
+    }
+})
+
 $labelDiag = New-Object Windows.Forms.Label
 $labelDiag.Text = "2. État actuel des routes (IPv4) :"
-$labelDiag.Location = New-Object Drawing.Point(20, 210)
+$labelDiag.Location = New-Object Drawing.Point(20, 225)
 $labelDiag.AutoSize = $true
 $form.Controls.Add($labelDiag)
 
 $txt = New-Object Windows.Forms.TextBox
 $txt.Multiline = $true
 $txt.ReadOnly = $true
-$txt.Location = New-Object Drawing.Point(20, 230)
-$txt.Size = New-Object Drawing.Size(380, 180)
+$txt.Location = New-Object Drawing.Point(20, 245)
+$txt.Size = New-Object Drawing.Size(380, 165)
 $txt.BackColor = [System.Drawing.Color]::White
 $txt.Font = New-Object Drawing.Font("Consolas", 8)
 $form.Controls.Add($txt)
