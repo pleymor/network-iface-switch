@@ -49,22 +49,39 @@ $form.Controls.Add($txt)
 
 $btnApply = New-Object Windows.Forms.Button
 $btnApply.Text = "FORCER LA PRIORITÉ"
-$btnApply.Location = New-Object Drawing.Point(20, 430)
-$btnApply.Size = New-Object Drawing.Size(380, 45)
+$btnApply.Location = New-Object Drawing.Point(20, 420)
+$btnApply.Size = New-Object Drawing.Size(185, 45)
 $btnApply.BackColor = [System.Drawing.Color]::LightGreen
 $btnApply.Font = New-Object Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
 $btnApply.Add_Click({
     if ($lb.SelectedItem) {
         $id = ($lb.SelectedItem -split 'ID: ')[1].Replace(']','')
         try {
+            # Forcer la métrique basse sur l'interface choisie
             Set-NetIPInterface -InterfaceIndex $id -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 10
-            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id } | Set-NetIPInterface -AutomaticMetric Enabled
+            # Forcer une métrique haute sur toutes les autres interfaces (au lieu de l'automatique)
+            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id -and $_.InterfaceAlias -match "Wi-Fi|Ethernet" } | Set-NetIPInterface -AutomaticMetric Disabled -InterfaceMetric 1000
             Update-List
-            [Windows.Forms.MessageBox]::Show("Priorité appliquée avec succès !", "Terminé")
+            [Windows.Forms.MessageBox]::Show("Priorité appliquée avec succès !`nInterface choisie : métrique 10`nAutres interfaces : métrique 1000", "Terminé")
         } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
     }
 })
 $form.Controls.Add($btnApply)
+
+$btnReset = New-Object Windows.Forms.Button
+$btnReset.Text = "RESET PRIORITÉS"
+$btnReset.Location = New-Object Drawing.Point(215, 420)
+$btnReset.Size = New-Object Drawing.Size(185, 45)
+$btnReset.BackColor = [System.Drawing.Color]::LightCoral
+$btnReset.Font = New-Object Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$btnReset.Add_Click({
+    try {
+        Get-NetIPInterface -AddressFamily IPv4 | Set-NetIPInterface -AutomaticMetric Enabled
+        Update-List
+        [Windows.Forms.MessageBox]::Show("Toutes les interfaces sont remises en métrique automatique.`nWindows gère à nouveau les priorités.", "Reset Terminé")
+    } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
+})
+$form.Controls.Add($btnReset)
 
 # --- PANNEAU DROIT (PRÉREQUIS ET AIDE) ---
 $grpHelp = New-Object Windows.Forms.GroupBox
@@ -96,8 +113,11 @@ function Update-List {
     $routes = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4
     $txt.Text = "ROUTES DÉTECTÉES :`r`n---------------------------`r`n"
     foreach ($r in $routes) {
-        $alias = (Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 | Select -First 1).InterfaceAlias
-        $txt.Text += "-> $alias`r`n   Métrique Totale: $($r.RouteMetric)`r`n"
+        $iface = Get-NetIPInterface -InterfaceIndex $r.InterfaceIndex -AddressFamily IPv4 | Select -First 1
+        $alias = $iface.InterfaceAlias
+        $ifMetric = $iface.InterfaceMetric
+        $totalMetric = $r.RouteMetric + $ifMetric
+        $txt.Text += "-> $alias`r`n   Interface: $ifMetric + Route: $($r.RouteMetric) = Total: $totalMetric`r`n"
     }
 }
 
