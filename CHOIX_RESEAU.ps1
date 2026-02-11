@@ -136,20 +136,60 @@ $form.Controls.Add($btnReset)
 $grpHelp = New-Object Windows.Forms.GroupBox
 $grpHelp.Text = " PRÉREQUIS & CONFIGURATION "
 $grpHelp.Location = New-Object Drawing.Point(420, 20)
-$grpHelp.Size = New-Object Drawing.Size(390, 455)
+$grpHelp.Size = New-Object Drawing.Size(390, 460)
 $form.Controls.Add($grpHelp)
 
-$helpText = New-Object Windows.Forms.Label
+$helpText = New-Object Windows.Forms.TextBox
 $helpText.Location = New-Object Drawing.Point(15, 30)
 $helpText.Size = New-Object Drawing.Size(360, 350)
-$helpText.Text = "A. DÉSACTIVATION IPv6 :`nSi le Wi-Fi reste prioritaire malgré le forçage, désactivez l'IPv6 sur la carte Wi-Fi.`n`nB. CRÉATION DU RACCOURCI :`n1. Clic-droit Bureau > Nouveau > Raccourci.`n2. Cible (Copiez-collez) :`n   powershell.exe -WindowStyle Hidden -File `"$PSCommandPath`"`n3. Nommez-le 'Gestionnaire Réseau'.`n`nC. PROPRIÉTÉS DU RACCOURCI :`n1. Clic-droit sur le raccourci > Propriétés.`n2. Bouton 'Avancé' > Cochez 'Exécuter en tant qu'administrateur'.`n`n---`nNote : Ce programme désactive la 'Métrique Automatique' pour fixer la valeur à 10 sur l'interface choisie."
+$helpText.Multiline = $true
+$helpText.ReadOnly = $true
+$helpText.BackColor = [System.Drawing.SystemColors]::Control
+$helpText.BorderStyle = "None"
+$helpText.Font = New-Object Drawing.Font("Segoe UI", 9)
+$helpText.Text = "A. ICÔNE SYSTÈME (Windows 11) :`r`nSur Windows 11, l'icône du system tray affiche toujours Ethernet tant qu'un câble est branché, même si le Wi-Fi est prioritaire. C'est normal : l'icône ne reflète pas le routage réel. Utilisez le bouton 'Tester' ci-dessous pour vérifier quelle interface est réellement utilisée.`r`n`r`nB. CRÉATION DU RACCOURCI :`r`n1. Clic-droit Bureau > Nouveau > Raccourci.`r`n2. Cible (Copiez-collez) :`r`n   powershell.exe -WindowStyle Hidden -File `"$PSCommandPath`"`r`n3. Nommez-le 'Gestionnaire Réseau'.`r`n`r`nC. PROPRIÉTÉS DU RACCOURCI :`r`n1. Clic-droit sur le raccourci > Propriétés.`r`n2. Bouton 'Avancé' > Cochez 'Exécuter en tant qu'administrateur'.`r`n`r`n---`r`nNote : Ce programme désactive la 'Métrique Automatique' pour fixer la valeur à 10 sur l'interface choisie."
 $grpHelp.Controls.Add($helpText)
 
+$btnTest = New-Object Windows.Forms.Button
+$btnTest.Text = "Tester l'interface prioritaire"
+$btnTest.Location = New-Object Drawing.Point(15, 385)
+$btnTest.Size = New-Object Drawing.Size(360, 35)
+$btnTest.BackColor = [System.Drawing.Color]::LightSkyBlue
+$btnTest.Add_Click({
+    $btnTest.Enabled = $false
+    $btnTest.Text = "Test en cours..."
+    $job = Start-Job -ScriptBlock {
+        $r = Test-NetConnection -ComputerName 8.8.8.8 -WarningAction SilentlyContinue
+        [PSCustomObject]@{ Alias = $r.InterfaceAlias; Source = $r.SourceAddress.IPAddress; Ping = $r.PingSucceeded }
+    }
+    $timer = New-Object Windows.Forms.Timer
+    $timer.Interval = 500
+    $timer.Add_Tick({
+        if ($job.State -ne 'Running') {
+            $timer.Stop()
+            $btnTest.Text = "Tester l'interface prioritaire"
+            $btnTest.Enabled = $true
+            try {
+                $r = Receive-Job -Job $job
+                Remove-Job -Job $job
+                [Windows.Forms.MessageBox]::Show(
+                    "Interface utilisée : $($r.Alias)`nAdresse source : $($r.Source)`nPing : $($r.Ping)",
+                    "Test de connexion",
+                    [Windows.Forms.MessageBoxButtons]::OK,
+                    [Windows.Forms.MessageBoxIcon]::Information)
+            } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
+        }
+    }.GetNewClosure())
+    $timer.Start()
+})
+$grpHelp.Controls.Add($btnTest)
+
 $btnNetCpl = New-Object Windows.Forms.Button
-$btnNetCpl.Text = "Ouvrir les Connexions Réseau (IPv6)"
-$btnNetCpl.Location = New-Object Drawing.Point(15, 390)
-$btnNetCpl.Size = New-Object Drawing.Size(360, 40)
-$btnNetCpl.Add_Click({ ncpa.cpl }) # Ouvre directement le panneau des cartes
+$btnNetCpl.Text = "Ouvrir les Connexions Réseau"
+$btnNetCpl.Location = New-Object Drawing.Point(15, 425)
+$btnNetCpl.Size = New-Object Drawing.Size(360, 25)
+$btnNetCpl.FlatStyle = "Flat"
+$btnNetCpl.Add_Click({ ncpa.cpl })
 $grpHelp.Controls.Add($btnNetCpl)
 
 # --- MISE À JOUR ---
