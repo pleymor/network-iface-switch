@@ -1,50 +1,48 @@
-# 🚀 Gestionnaire de Priorité Réseau (IPv4)
+# Gestionnaire de Priorite Reseau (IPv4)
 
-Cet utilitaire PowerShell permet de forcer Windows à utiliser une interface réseau spécifique (ex: **Ethernet**) au lieu d'une autre (ex: **Wi-Fi**) en modifiant les métriques d'interface.
+Utilitaire PowerShell pour forcer Windows a utiliser une interface reseau specifique (ex: **Wi-Fi** au lieu d'**Ethernet**) en modifiant les metriques d'interface et de route.
 
 ---
 
-## 🛠️ Prérequis de Configuration
+## Prerequis
 
-Pour que le forçage soit efficace à 100%, suivez ces trois étapes :
+### 1. Droits Administrateur (Obligatoire)
+Le script doit etre execute en tant qu'administrateur. Il demandera automatiquement l'elevation si necessaire.
 
-### 1. Désactivation de l'IPv6
-Windows donne souvent la priorité à l'IPv6 sur l'IPv4. Si votre Wi-Fi est en IPv6, il pourrait ignorer vos réglages.
-* Ouvrez les **Connexions Réseau** (via le bouton dans l'application ou en tapant `ncpa.cpl` dans Windows).
-* Faites un clic-droit sur votre carte **Wi-Fi** > **Propriétés**.
-* DÉCOCHEZ la case **Protocole Internet version 6 (TCP/IPv6)**.
-* Cliquez sur **OK**.
-
-
-
-### 2. Création du Raccourci
-Pour éviter les erreurs d'accès et masquer la fenêtre console :
-1.  Faites un clic-droit sur le bureau > **Nouveau** > **Raccourci**.
-2.  Entrez la cible suivante (adaptez le chemin si nécessaire) :
-    ```powershell
+### 2. Creation du Raccourci
+1. Clic-droit sur le bureau > **Nouveau** > **Raccourci**.
+2. Entrez la cible suivante (adaptez le chemin si necessaire) :
+    ```
     powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "CHOIX_RESEAU.ps1"
     ```
-3.  Nommez-le **"Gestionnaire Réseau"**.
-
-### 3. Droits Administrateur (Obligatoire)
-1.  Clic-droit sur votre nouveau raccourci > **Propriétés**.
-2.  Dans l'onglet **Raccourci**, cliquez sur le bouton **Avancé**.
-3.  Cochez la case **Exécuter en tant qu'administrateur**.
-4.  Validez par **OK**.
+3. Nommez-le **"Gestionnaire Reseau"**.
+4. Clic-droit sur le raccourci > **Proprietes** > **Avance** > cochez **Executer en tant qu'administrateur**.
 
 ---
 
-## 📖 Mode d'emploi
+## Mode d'emploi
 
-1.  **Lancer l'application** via le raccourci créé.
-2.  **Sélectionner** l'interface souhaitée dans la liste du haut (ex: *Ethernet 3*).
-3.  Cliquer sur **FORCER LA PRIORITÉ**.
-    * L'interface choisie passera en **Métrique 10** (Priorité haute).
-    * Les autres interfaces repasseront en **Métrique Automatique** (Priorité basse).
-4.  **Vérifier** dans le cadre "Diagnostic" que la métrique totale de votre choix est la plus petite.
+### Forcer la priorite
+1. Lancer l'application via le raccourci.
+2. Selectionner l'interface souhaitee dans la liste (ex: *Wi-Fi*).
+3. Cliquer sur **FORCER LA PRIORITE**.
+   - L'interface choisie : metrique d'interface **10** + metrique de route **0** = total **10**
+   - Les autres interfaces : metrique d'interface **1000** + metrique de route **1000** = total **2000**
+4. Verifier dans le cadre diagnostic que la metrique totale de votre choix est la plus petite.
 
+### Reset des priorites
+Cliquer sur **RESET PRIORITES** pour remettre toutes les interfaces en metrique automatique et les metriques de route a 0. Le script `RESET_RESEAU.ps1` fait la meme chose en standalone.
 
+### IPv6
+Une checkbox permet d'activer/desactiver l'IPv6 par interface. Desactiver l'IPv6 peut aider a forcer la priorite car Windows utilise parfois l'IPv6 pour router le trafic, contournant les metriques IPv4. Cliquer sur le bouton **(i)** dans l'application pour plus de details.
 
-## 📝 Notes Techniques
-* **Métrique IP** : C'est le "poids" d'une connexion. Plus le chiffre est **bas**, plus la connexion est **prioritaire**.
-* **Compatibilité** : Ce script cible uniquement l'IPv4 pour garantir une stabilité maximale sur Windows 10/11.
+### Test de l'interface prioritaire
+Le bouton **Tester l'interface prioritaire** effectue un ping vers 8.8.8.8 et affiche quelle interface est reellement utilisee pour le routage. Utile car sur Windows 11, l'icone du system tray affiche toujours Ethernet tant qu'un cable est branche, meme si le Wi-Fi est prioritaire.
+
+---
+
+## Notes techniques
+- **Metrique IP** : plus le chiffre est **bas**, plus la connexion est **prioritaire**.
+- **Metrique totale** = metrique d'interface + metrique de route. Les deux sont modifiees par le script.
+- **Compatibilite** : Windows 10/11, IPv4 uniquement.
+- **Icone Windows 11** : l'icone du system tray ne reflete pas le routage reel. C'est un comportement normal.
