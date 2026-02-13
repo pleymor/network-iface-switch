@@ -108,8 +108,13 @@ $btnApply.Add_Click({
         try {
             # Forcer la métrique basse sur l'interface choisie
             Set-NetIPInterface -InterfaceIndex $id -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 10
+            # Forcer la métrique de route à 0 sur l'interface choisie
+            Get-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceIndex $id -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 0
             # Forcer une métrique haute sur toutes les autres interfaces (au lieu de l'automatique)
-            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id -and $_.InterfaceAlias -match "Wi-Fi|Ethernet" } | Set-NetIPInterface -AutomaticMetric Disabled -InterfaceMetric 1000
+            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id -and $_.InterfaceAlias -match "Wi-Fi|Ethernet" } | ForEach-Object {
+                Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1000
+                Get-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 1000
+            }
             Update-List
             [Windows.Forms.MessageBox]::Show("Priorité appliquée avec succès !`nInterface choisie : métrique 10`nAutres interfaces : métrique 1000", "Terminé")
         } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
