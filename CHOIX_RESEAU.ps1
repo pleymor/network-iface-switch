@@ -111,7 +111,7 @@ $btnApply.Add_Click({
             # Forcer la métrique de route à 0 sur l'interface choisie
             Get-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceIndex $id -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 0
             # Forcer une métrique haute sur toutes les autres interfaces (au lieu de l'automatique)
-            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id -and $_.InterfaceAlias -match "Wi-Fi|Ethernet" } | ForEach-Object {
+            Get-NetIPInterface -AddressFamily IPv4 | Where { $_.InterfaceIndex -ne $id -and $_.InterfaceAlias -match "Wi-Fi|WiFi|Ethernet" } | ForEach-Object {
                 Set-NetIPInterface -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1000
                 Get-NetRoute -DestinationPrefix "0.0.0.0/0" -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 1000
             }
@@ -202,7 +202,7 @@ $grpHelp.Controls.Add($btnNetCpl)
 function Update-List {
     $lb.Items.Clear()
     $ints = Get-NetIPInterface -AddressFamily IPv4 
-    if (-not $chkAll.Checked) { $ints = $ints | Where { $_.InterfaceAlias -match "Wi-Fi|Ethernet" } }
+    if (-not $chkAll.Checked) { $ints = $ints | Where { $_.InterfaceAlias -match "Wi-Fi|WiFi|Ethernet" } }
     foreach ($i in $ints) { [void]$lb.Items.Add("$($i.InterfaceAlias) [ID: $($i.InterfaceIndex)]") }
     
     $routes = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4
