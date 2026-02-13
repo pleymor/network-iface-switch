@@ -131,8 +131,9 @@ $btnReset.Font = New-Object Drawing.Font("Segoe UI", 10, [System.Drawing.FontSty
 $btnReset.Add_Click({
     try {
         Get-NetIPInterface -AddressFamily IPv4 | Set-NetIPInterface -AutomaticMetric Enabled
+        Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 0
         Update-List
-        [Windows.Forms.MessageBox]::Show("Toutes les interfaces sont remises en métrique automatique.`nWindows gère à nouveau les priorités.", "Reset Terminé")
+        [Windows.Forms.MessageBox]::Show("Toutes les interfaces sont remises en métrique automatique.`nLes métriques de route sont remises à 0.`nWindows gère à nouveau les priorités.", "Reset Terminé")
     } catch { [Windows.Forms.MessageBox]::Show("Erreur : $($_.Exception.Message)") }
 })
 $form.Controls.Add($btnReset)
