@@ -1,0 +1,5 @@
+# Fichiers stockes en LF dans le depot, extraits en CRLF (format Windows) pour PowerShell et Markdown.
+* text=auto
+*.ps1 text eol=crlf
+*.md text eol=crlf
+*.png binary

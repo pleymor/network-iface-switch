@@ -6,11 +6,27 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 Add-Type -AssemblyName System.Windows.Forms
 
-# Action : On remet TOUT en automatique pour l'IPv4
+$corePath = Join-Path $PSScriptRoot 'NetIfaceSwitch.Core.ps1'
+if (-not (Test-Path -LiteralPath $corePath)) {
+    [Windows.Forms.MessageBox]::Show("Fichier manquant : $corePath`n`nGardez NetIfaceSwitch.Core.ps1 dans le même dossier que RESET_RESEAU.ps1.", "Erreur") | Out-Null
+    Exit 1
+}
+. $corePath
+
+# Action : on remet TOUT en automatique (IPv4 et IPv6), routes par défaut à 0, et on oublie l'ordre de la vue Simple.
+# En cas d'erreur, les modifications déjà faites sont annulées.
 try {
-    Get-NetIPInterface -AddressFamily IPv4 | Set-NetIPInterface -AutomaticMetric Enabled
-    Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 -ErrorAction SilentlyContinue | Set-NetRoute -RouteMetric 0
-    [Windows.Forms.MessageBox]::Show("Toutes les interfaces ont été remises en mode 'Métrique Automatique'.`nLes métriques de route sont remises à 0.`nWindows gère à nouveau les priorités.", "Reset Terminé")
+    $states = @(Get-NisInterfaceStates -IncludeVirtual)
+    $desired = @(Get-NisResetDesired -States $states)
+    $changes = @(Get-NisChangeSet -Desired $desired -States $states)
+    $result = Invoke-NisChangeSet -Actions $changes
+    if ($result.Success) {
+        Clear-NisOrder
+        [Windows.Forms.MessageBox]::Show("Toutes les interfaces ont été remises en mode 'Métrique Automatique' ($($result.AppliedCount) modification(s)).`nLes métriques de route sont remises à 0.`nL'ordre sauvegardé de la vue Simple est oublié.`nWindows gère à nouveau les priorités.", "Reset Terminé") | Out-Null
+    } else {
+        $report = @(Format-NisResultReport -Result $result) -join "`n"
+        [Windows.Forms.MessageBox]::Show("Erreur lors de la réinitialisation : $($result.ErrorMessage)`nLes modifications déjà faites ont été annulées.`n`n$report", "Reset - échec") | Out-Null
+    }
 } catch {
-    [Windows.Forms.MessageBox]::Show("Erreur lors de la réinitialisation : $($_.Exception.Message)")
+    [Windows.Forms.MessageBox]::Show("Erreur lors de la réinitialisation : $($_.Exception.Message)") | Out-Null
 }
