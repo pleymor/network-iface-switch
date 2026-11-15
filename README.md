@@ -35,17 +35,26 @@ Gardez ces fichiers dans le **meme dossier** :
 
 ---
 
-## Vue Simple : classer les interfaces
+## Vue Simple : choisir l'ordre des connexions
 
-1. Lancer l'application : la vue **Simple** liste les cartes physiques (nom, type Ethernet/Wi-Fi/Autre, etat, adresse IPv4, metrique actuelle, metrique apres application).
-2. Classer les interfaces de la plus prioritaire (en haut) a la moins prioritaire (en bas) :
+La vue Simple ne montre aucun reglage technique : juste vos connexions, dans l'ordre ou Windows doit les utiliser.
+
+1. Lancer l'application : la liste affiche vos connexions (nom, type Wi-Fi / Cable (Ethernet) / Autre, etat : Connectee, Non connectee, Non branchee).
+2. Mettre en haut la connexion a utiliser en priorite :
    - glisser-deposer une ligne sur une autre,
    - ou boutons **Monter** / **Descendre** (raccourcis Alt+M / Alt+D),
    - ou clavier : selectionner une ligne puis **Ctrl+Haut** / **Ctrl+Bas**.
-3. Cliquer sur **Appliquer l'ordre** : la liste des modifications est affichee, rien n'est fait sans confirmation.
-4. Apres application, le cadre **Resultat effectif** montre l'ordre reel de Windows et l'interface que Windows choisit pour joindre Internet (calcul local `Find-NetRoute`, sans envoyer de paquet). Le bouton **Tester (ping 8.8.8.8)** verifie avec un vrai ping.
+3. Cliquer sur **Appliquer cet ordre** et confirmer.
+4. Une phrase indique par quelle connexion passe Internet (ex: *Internet passe par « Wi-Fi », comme prevu par votre ordre*). Le bouton **Verifier la connexion Internet** fait un vrai test.
 
-### Schema de priorite automatique (N interfaces)
+- Une connexion **non connectee** ou **non branchee** (dock debranche...) garde sa place : elle reprend son rang des qu'elle revient. **Retirer de la liste** supprime une connexion non branchee dont vous ne vous servez plus.
+- L'ordre est memorise et reaffiche au prochain lancement.
+- **Revenir au choix automatique de Windows** annule tout : Windows choisit de nouveau lui-meme, et l'ordre est oublie.
+- En cas de probleme, tout est remis comme avant ; les details techniques sont dans l'onglet **Avance** (journal).
+
+### Comment ca marche (details techniques)
+
+L'ordre est traduit en metriques pour toutes les connexions classees :
 
 | Rang | Metrique d'interface | Metrique de route (0.0.0.0/0) | Metrique totale |
 |------|----------------------|-------------------------------|-----------------|
@@ -54,24 +63,19 @@ Gardez ces fichiers dans le **meme dossier** :
 | 3    | 30                   | 20                            | **50**          |
 | N    | 10 x N               | 10 x (N - 1)                  | **20 x N - 10** |
 
-- Windows utilise la route dont la **metrique totale** (interface + route) est la plus petite : les totaux sont strictement croissants et espaces de 20, donc la 1re interface connectee est toujours utilisee, puis la suivante si elle se deconnecte, etc.
-- Une interface **deconnectee** recoit quand meme ses metriques : elle reprend sa place des qu'elle revient.
-- Une interface **absente** (dock debranche...) garde son rang dans la liste (affichee grisee, "rang conserve") ; le bouton **Oublier** la retire de l'ordre.
-- Option **Appliquer aussi l'ordre aux metriques IPv6** (cochee par defaut) : la metrique d'interface IPv6 recoit la meme valeur (10, 20, 30...), pour que le trafic IPv6 suive le meme ordre.
-- Option **Inclure les cartes virtuelles** : ajoute VPN, Hyper-V/WSL... a la liste. Sinon ces cartes ne sont pas modifiees.
-- Les interfaces non classees (virtuelles masquees) ne sont pas modifiees.
-
-### Ordre sauvegarde
-L'ordre applique est enregistre dans `%APPDATA%\network-iface-switch\order.json` et reaffiche au prochain lancement. Les interfaces sont reconnues par leur identifiant (GUID), meme si elles sont renommees.
-
-### Reinitialiser (automatique)
-Remet toutes les interfaces en metrique automatique (IPv4 et IPv6), les metriques de route par defaut a 0, et **oublie l'ordre sauvegarde**. Windows gere a nouveau les priorites. Le script `RESET_RESEAU.ps1` fait la meme chose en standalone.
+- Windows utilise la route dont la **metrique totale** (interface + route) est la plus petite : les totaux sont strictement croissants et espaces de 20, donc la 1re connexion disponible est toujours utilisee, puis la suivante, etc.
+- Une connexion non connectee recoit quand meme ses metriques ; une connexion non branchee garde son rang sans etre modifiee.
+- Options de la vue Simple (onglet **Avance**, en haut) :
+  - **inclure les cartes virtuelles** : ajoute VPN, Hyper-V/WSL... a la liste (sinon elles ne sont pas modifiees) ;
+  - **meme ordre pour IPv6** (coche par defaut) : la metrique d'interface IPv6 recoit la meme valeur (10, 20, 30...).
+- L'ordre est enregistre dans `%APPDATA%\network-iface-switch\order.json` ; les connexions sont reconnues par leur identifiant (GUID), meme renommees.
+- Revenir au choix automatique = toutes les interfaces en metrique automatique (IPv4 et IPv6), metriques de route par defaut a 0, ordre oublie. Le script `RESET_RESEAU.ps1` fait la meme chose en standalone.
 
 ---
 
 ## Vue Avance : tous les parametres
 
-Le tableau affiche une ligne par interface (cocher **Afficher toutes les cartes** pour voir aussi les cartes virtuelles) :
+Le tableau affiche une ligne par interface (cocher **Toutes les cartes** pour voir aussi les cartes virtuelles). Le journal des actions est affiche en bas de cet onglet.
 
 | Colonne | Role |
 |---------|------|
@@ -86,7 +90,7 @@ Le tableau affiche une ligne par interface (cocher **Afficher toutes les cartes*
 - **Appliquer la ligne** : applique uniquement la ligne selectionnee.
 - **Appliquer tout** : applique toutes les lignes.
 - **Forcer la ligne en priorite** : ancien mode "une seule interface prioritaire" (10 + 0 pour la ligne, 1000 + 1000 pour les autres cartes physiques).
-- **Reinitialiser (automatique)** : comme dans la vue Simple.
+- **Reinitialiser (automatique)** : comme *Revenir au choix automatique de Windows* dans la vue Simple.
 - Le cadre **Etat actuel des routes** liste les routes par defaut de la plus prioritaire a la moins prioritaire (interface + route = total), et l'interface utilisee vers Internet.
 - Les boutons **(i)** expliquent les metriques et l'IPv6.
 
@@ -100,7 +104,7 @@ Desactiver l'IPv6 peut aider a forcer la priorite car Windows utilise parfois l'
 - **Validation complete avant d'appliquer** : toutes les valeurs de toutes les interfaces sont verifiees (nombres, limites, interface toujours presente...) ; s'il y a une erreur, rien n'est modifie.
 - **Confirmation** : la liste exacte des modifications est affichee avant d'appliquer. Seules les valeurs qui changent sont modifiees.
 - **Pas de configuration a moitie appliquee** : si une modification echoue, toutes celles deja faites sont annulees (retour aux valeurs d'origine) et un compte rendu par interface est affiche.
-- **Journal** : chaque action (et son resultat) est affichee dans le cadre Journal en bas de la fenetre.
+- **Journal** : chaque action (et son resultat) est affichee dans le cadre Journal (onglet Avance).
 
 ---
 

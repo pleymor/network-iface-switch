@@ -90,12 +90,13 @@ function Invoke-UiChange {
       Valide TOUS les réglages, affiche les modifications, demande confirmation, applique.
       En cas d'erreur, Invoke-NisChangeSet annule ce qui a déjà été fait.
     #>
-    param([object[]]$Desired, [object[]]$CurrentStates, [string]$Title, [string]$Summary)
+    param([object[]]$Desired, [object[]]$CurrentStates, [string]$Title, [string]$Summary, [switch]$Plain)
     $errs = @(Test-NisDesiredSettings -Desired $Desired -States $CurrentStates)
     if ($errs.Count -gt 0) {
         Write-UiLog "$Title : valeurs invalides, rien n'a été modifié."
         foreach ($e in $errs) { Write-UiLog "  - $e" }
-        Show-Msg ("Aucune modification n'a été faite. Corrigez :`n`n- " + ($errs -join "`n- ")) "$Title - valeurs invalides" Warning
+        if ($Plain) { Show-Msg "Impossible d'appliquer ce changement, rien n'a été modifié.`n`nDétails dans l'onglet Avancé (journal)." $Title Warning }
+        else { Show-Msg ("Aucune modification n'a été faite. Corrigez :`n`n- " + ($errs -join "`n- ")) "$Title - valeurs invalides" Warning }
         return $null
     }
     $changeList = @(Get-NisChangeSet -Desired $Desired -States $CurrentStates)
@@ -107,7 +108,13 @@ function Invoke-UiChange {
     if ($changeList.Count -gt 25) { $lines += "... et $($changeList.Count - 25) autre(s)" }
     $text = ""
     if ($Summary) { $text = "$Summary`n`n" }
-    $text += "Modifications à appliquer ($($changeList.Count)) :`n" + ($lines -join "`n") + "`n`nEn cas d'erreur, tout ce qui a déjà été modifié est annulé.`nContinuer ?"
+    if ($Plain) {
+        $text += "Continuer ?"
+        Write-UiLog "$Title : modifications prévues :"
+        foreach ($l in $lines) { Write-UiLog "  $l" }
+    } else {
+        $text += "Modifications à appliquer ($($changeList.Count)) :`n" + ($lines -join "`n") + "`n`nEn cas d'erreur, tout ce qui a déjà été modifié est annulé.`nContinuer ?"
+    }
     if (-not (Confirm-Msg $text $Title)) {
         Write-UiLog "$Title : annulé par l'utilisateur."
         return $null
@@ -127,56 +134,26 @@ function Invoke-UiChange {
         foreach ($l in $report) { Write-UiLog "  $l" }
         $head = "L'application a échoué. Les modifications déjà faites ont été annulées."
         if (@($result.RollbackErrors).Count -gt 0) { $head = "L'application a échoué ET certaines annulations ont échoué : vérifiez les interfaces signalées (ou utilisez Réinitialiser)." }
-        Show-Msg ("$head`n`n" + ($report -join "`n")) "$Title - échec" Error
+        if ($Plain) {
+            $msg = "Le changement n'a pas pu être appliqué. Tout a été remis comme avant.`n`nDétails dans l'onglet Avancé (journal)."
+            if (@($result.RollbackErrors).Count -gt 0) { $msg = "Le changement n'a pas pu être appliqué, et certains réglages n'ont pas pu être remis comme avant.`n`nCliquez sur « Revenir au choix automatique de Windows ». Détails dans l'onglet Avancé (journal)." }
+            Show-Msg $msg "$Title - échec" Error
+        } else {
+            Show-Msg ("$head`n`n" + ($report -join "`n")) "$Title - échec" Error
+        }
     }
     return $result
 }
 
 function Format-StatusText {
     param($Entry)
-    if (-not $Entry.Present) { return 'Absente' }
+    if (-not $Entry.Present) { return 'Non branchée' }
     switch ($Entry.State.Status) {
         'Up' { return 'Connectée' }
-        'Disconnected' { return 'Déconnectée' }
+        'Disconnected' { return 'Non connectée' }
         'Disabled' { return 'Désactivée' }
         default { return [string]$Entry.State.Status }
     }
-}
-
-function Format-CurrentMetric {
-    param($State)
-    if (-not $State) { return '-' }
-    $auto = ''
-    if ($State.AutomaticMetric) { $auto = ' (auto)' }
-    if ($null -ne $State.EffectiveMetric) {
-        return "$($State.InterfaceMetric)$auto + $($State.RouteMetric) = $($State.EffectiveMetric)"
-    }
-    return "$($State.InterfaceMetric)$auto, pas de route"
-}
-
-function Get-EffectiveSummary {
-    <# Ordre effectif réel + interface choisie par Windows pour Internet (calcul local, sans ping). #>
-    param([object[]]$AllStates, $ExpectedFirst)
-    $order = @(Get-NisEffectiveOrder -States $AllStates)
-    $parts = @()
-    $n = 0
-    foreach ($s in $order) { $n++; $parts += "$n. $($s.Alias) ($($s.EffectiveMetric))" }
-    $text = "Ordre effectif (interfaces avec route par défaut, métrique totale) : "
-    if ($parts.Count -gt 0) { $text += ($parts -join '  >  ') } else { $text += "aucune route par défaut" }
-    try {
-        $route = Find-NisEffectiveRoute
-        if ($route) {
-            $text += "`r`nRoute choisie par Windows vers Internet : $($route.Alias)"
-            if ($route.SourceAddress) { $text += " (source $($route.SourceAddress)" ; if ($route.NextHop) { $text += ", passerelle $($route.NextHop)" } ; $text += ")" }
-            if ($ExpectedFirst) {
-                if ($route.InterfaceIndex -eq $ExpectedFirst.InterfaceIndex) { $text += "  - conforme à l'ordre choisi." }
-                else { $text += "  - ATTENTION : la 1re interface connectée de votre ordre est $($ExpectedFirst.Alias)." }
-            }
-        }
-    } catch {
-        $text += "`r`nRoute vers Internet : indéterminée ($($_.Exception.Message))"
-    }
-    return $text
 }
 
 # Test ping (job en arrière-plan, suivi par un timer pour ne pas figer la fenêtre)
@@ -194,10 +171,9 @@ $pingTimer.Add_Tick({
         $r = Receive-Job -Job $job -ErrorAction Stop
         $ok = 'échec'
         if ($r.Ping) { $ok = 'OK' }
-        $msg = "Interface utilisée : $($r.Alias)`nAdresse source : $($r.Source)`nPing 8.8.8.8 : $ok"
-        Write-UiLog ("Test ping : " + ($msg -replace "`n", ' | '))
-        $txtSimpleResult.AppendText("`r`nTest ping : interface $($r.Alias), source $($r.Source), ping $ok")
-        Show-Msg $msg "Test de connexion"
+        Write-UiLog "Test ping 8.8.8.8 : interface $($r.Alias), source $($r.Source), ping $ok"
+        if ($r.Ping) { Show-Msg "Internet fonctionne.`n`nConnexion utilisée : $($r.Alias)" "Vérifier la connexion" }
+        else { Show-Msg "Internet ne répond pas.`n`nConnexion essayée : $($r.Alias)" "Vérifier la connexion" Warning }
     } catch {
         Write-UiLog "Test ping : erreur - $($_.Exception.Message)"
         Show-Msg "Erreur : $($_.Exception.Message)" "Test de connexion" Error
@@ -248,7 +224,6 @@ $helpIPv6 = "Désactiver l'IPv6 sur une interface force Windows à utiliser uniq
 
 $helpMetrics = "Windows choisit la route dont la MÉTRIQUE TOTALE est la plus petite :`n   métrique totale = métrique d'interface + métrique de route (0.0.0.0/0)`n`n- Métrique auto : Windows calcule la métrique d'interface selon le débit de la carte. Décochez pour fixer votre valeur (1 à 9999).`n- Métrique interface : priorité de la carte (IPv4).`n- Métrique route : priorité de la route par défaut de la carte (0 à 9999). Vide si la carte n'a pas de route par défaut (déconnectée).`n- IPv6 activé / Métrique IPv6 : le trafic IPv6 suit ses propres métriques. Laissez la métrique IPv6 vide pour le mode automatique.`n`nLes modifications ne sont faites qu'en cliquant sur Appliquer, après confirmation. Les lignes modifiées sont surlignées en jaune."
 
-$helpScheme = "L'ordre de la liste devient l'ordre de priorité, pour toutes les interfaces :`n`n   rang 1 : interface 10 + route 0  = total 10`n   rang 2 : interface 20 + route 10 = total 30`n   rang 3 : interface 30 + route 20 = total 50`n   ...`n`nLes métriques totales sont strictement croissantes et espacées de 20 : la 1re interface connectée est toujours utilisée, puis la suivante si elle se déconnecte, etc.`n`nUne interface déconnectée ou absente garde son rang : elle retrouvera sa place à son retour.`n`nOption IPv6 : la métrique d'interface IPv6 reçoit la même valeur (10, 20, 30...).`n`nRéinitialiser remet tout en automatique (comportement Windows) et oublie l'ordre sauvegardé."
 
 # ---------------------------------------------------------------------------
 # Onglets
@@ -274,51 +249,61 @@ $tabs.TabPages.Add($tabAdv)
 # ===========================================================================
 
 $script:SimpleEntries = @()
+$script:SimpleDirty = $false
+
+function Format-KindText {
+    param([string]$Kind)
+    switch ($Kind) {
+        'Ethernet' { return 'Câble (Ethernet)' }
+        'Wi-Fi' { return 'Wi-Fi' }
+        default { return 'Autre' }
+    }
+}
+
+$lblSimpleTitle = New-Object Windows.Forms.Label
+$lblSimpleTitle.Text = "Dans quel ordre utiliser vos connexions ?"
+$lblSimpleTitle.Font = New-Object Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+$lblSimpleTitle.Location = New-Object Drawing.Point(16, 12)
+$lblSimpleTitle.AutoSize = $true
+$tabSimple.Controls.Add($lblSimpleTitle)
 
 $lblSimple = New-Object Windows.Forms.Label
-$lblSimple.Text = "Classez les interfaces de la plus prioritaire (en haut) à la moins prioritaire (en bas) : glisser-déposer, boutons ▲ ▼ ou Ctrl+Haut / Ctrl+Bas, puis « Appliquer l'ordre »."
-$lblSimple.Location = New-Object Drawing.Point(12, 10)
-$lblSimple.Size = New-Object Drawing.Size(900, 20)
+$lblSimple.Text = "La connexion en haut de la liste est utilisée en priorité. Si elle n'est pas disponible, la suivante prend le relais.`r`nPour changer l'ordre, faites glisser une connexion ou utilisez les flèches, puis cliquez sur « Appliquer cet ordre »."
+$lblSimple.Font = New-Object Drawing.Font("Segoe UI", 9.5)
+$lblSimple.Location = New-Object Drawing.Point(18, 44)
+$lblSimple.Size = New-Object Drawing.Size(940, 40)
 $tabSimple.Controls.Add($lblSimple)
 
-$tabSimple.Controls.Add((New-InfoButton -X 935 -Y 8 -Title "Priorités automatiques" -Text $helpScheme))
-
 $lvSimple = New-Object Windows.Forms.ListView
-$lvSimple.Location = New-Object Drawing.Point(12, 35)
-$lvSimple.Size = New-Object Drawing.Size(735, 270)
+$lvSimple.Location = New-Object Drawing.Point(18, 90)
+$lvSimple.Size = New-Object Drawing.Size(700, 250)
 $lvSimple.View = [Windows.Forms.View]::Details
 $lvSimple.FullRowSelect = $true
 $lvSimple.MultiSelect = $false
 $lvSimple.HideSelection = $false
-$lvSimple.GridLines = $true
 $lvSimple.AllowDrop = $true
-$lvSimple.AccessibleName = "Interfaces classées par priorité"
-foreach ($c in @(@('Rang', 45), @('Interface', 140), @('Type', 65), @('État', 90), @('Adresse IPv4', 100), @('Métrique actuelle', 160), @('Après application', 110))) {
+$lvSimple.HeaderStyle = [Windows.Forms.ColumnHeaderStyle]::Nonclickable
+$lvSimple.Font = New-Object Drawing.Font("Segoe UI", 10.5)
+$lvSimple.AccessibleName = "Connexions, de la plus utilisée à la moins utilisée"
+# Lignes plus hautes (astuce WinForms : une image transparente de 30 px de haut)
+$rowHeight = New-Object Windows.Forms.ImageList
+$rowHeight.ImageSize = New-Object Drawing.Size(1, 30)
+$lvSimple.SmallImageList = $rowHeight
+foreach ($c in @(@('', 45), @('Connexion', 330), @('Type', 150), @('État', 150))) {
     [void]$lvSimple.Columns.Add($c[0], $c[1])
 }
 $tabSimple.Controls.Add($lvSimple)
 
 function Show-SimpleList {
     param([int]$SelectIndex = -1)
-    $plan = @(Get-NisPriorityPlan -Entries $script:SimpleEntries)
     $lvSimple.BeginUpdate()
     $lvSimple.Items.Clear()
     for ($i = 0; $i -lt $script:SimpleEntries.Count; $i++) {
         $e = $script:SimpleEntries[$i]
-        $p = $plan[$i]
-        $item = New-Object Windows.Forms.ListViewItem([string]($i + 1))
+        $item = New-Object Windows.Forms.ListViewItem("  $($i + 1)")
         [void]$item.SubItems.Add([string]$e.Alias)
-        [void]$item.SubItems.Add([string]$e.Kind)
+        [void]$item.SubItems.Add((Format-KindText $e.Kind))
         [void]$item.SubItems.Add((Format-StatusText $e))
-        $ip = ''
-        if ($e.State) { $ip = $e.State.IPv4Address }
-        [void]$item.SubItems.Add([string]$ip)
-        [void]$item.SubItems.Add((Format-CurrentMetric $e.State))
-        if ($e.Present) {
-            [void]$item.SubItems.Add("$($p.InterfaceMetric) + $($p.RouteMetric) = $($p.TotalMetric)")
-        } else {
-            [void]$item.SubItems.Add("rang conservé")
-        }
         if (-not $e.Present -or -not $e.State.IsUp) { $item.ForeColor = [System.Drawing.Color]::Gray }
         [void]$lvSimple.Items.Add($item)
     }
@@ -331,27 +316,53 @@ function Show-SimpleList {
     Update-SimpleButtons
 }
 
+function Set-SimpleDirty {
+    param([bool]$Dirty)
+    $script:SimpleDirty = $Dirty
+    if ($Dirty) { $lblSimpleDirty.Text = "Ordre modifié.`r`nCliquez sur « Appliquer cet ordre » pour l'utiliser." } else { $lblSimpleDirty.Text = "" }
+}
+
+function Update-SimpleStatus {
+    <# Une phrase en clair : par quelle connexion passe Internet, et est-ce conforme à la liste ? #>
+    $first = $script:SimpleEntries | Where-Object { $_.Present -and $_.State.IsUp -and $null -ne $_.State.EffectiveMetric } | Select-Object -First 1
+    $route = $null
+    try { $route = Find-NisEffectiveRoute } catch { $route = $null }
+    if (-not $route) {
+        $lblSimpleStatus.ForeColor = [System.Drawing.Color]::DimGray
+        $lblSimpleStatus.Text = "Aucune connexion Internet détectée pour le moment."
+    } elseif ($script:SimpleDirty) {
+        $lblSimpleStatus.ForeColor = [System.Drawing.Color]::DarkOrange
+        $lblSimpleStatus.Text = "Internet passe actuellement par « $($route.Alias) »."
+    } elseif ($first -and $route.InterfaceIndex -eq $first.State.InterfaceIndex) {
+        $lblSimpleStatus.ForeColor = [System.Drawing.Color]::ForestGreen
+        $lblSimpleStatus.Text = "✔  Internet passe par « $($route.Alias) », comme prévu par votre ordre."
+    } elseif ($first) {
+        $lblSimpleStatus.ForeColor = [System.Drawing.Color]::DarkOrange
+        $lblSimpleStatus.Text = "⚠  Internet passe par « $($route.Alias) » alors que « $($first.Alias) » est en tête de votre liste. Cliquez sur « Appliquer cet ordre »."
+    } else {
+        $lblSimpleStatus.ForeColor = [System.Drawing.Color]::Black
+        $lblSimpleStatus.Text = "Internet passe par « $($route.Alias) »."
+    }
+}
+
 function Update-SimpleView {
     param([switch]$KeepOrder)
     $all = Get-UiStates -IncludeVirtual
     if ($null -eq $all) { return }
     if ($KeepOrder) { $saved = $script:SimpleEntries } else { $saved = @(Read-NisOrder) }
     if (-not $KeepOrder -and -not $chkSimpleVirtual.Checked) {
-        # Une carte virtuelle classée lors d'un précédent « Appliquer l'ordre » doit rester dans l'ordre
+        # Une carte virtuelle classée lors d'un précédent « Appliquer » doit rester dans l'ordre
         $rankedVirtual = @($all | Where-Object { $st = $_; -not $st.IsUsable -and @($saved | Where-Object { ($_.Guid -and $st.Guid -and $_.Guid -eq $st.Guid) -or ($_.Alias -eq $st.Alias) }).Count -gt 0 })
         if ($rankedVirtual.Count -gt 0) {
             $chkSimpleVirtual.Checked = $true
             Write-UiLog "Vue Simple : cartes virtuelles affichées car présentes dans l'ordre sauvegardé ($(($rankedVirtual | ForEach-Object { $_.Alias }) -join ', '))."
         }
     }
+    $sel = -1
+    if ($lvSimple.SelectedIndices.Count -gt 0) { $sel = $lvSimple.SelectedIndices[0] }
     $script:SimpleEntries = @(Merge-NisOrder -SavedOrder $saved -States $all -UsableOnly:(-not $chkSimpleVirtual.Checked))
-    Show-SimpleList
-    if ($null -ne $all) {
-        $first = $script:SimpleEntries | Where-Object { $_.Present -and $_.State.IsUp -and $null -ne $_.State.EffectiveMetric } | Select-Object -First 1
-        $expected = $null
-        if ($first) { $expected = $first.State }
-        $txtSimpleResult.Text = Get-EffectiveSummary -AllStates $all -ExpectedFirst $expected
-    }
+    Show-SimpleList -SelectIndex $sel
+    Update-SimpleStatus
 }
 
 function Move-SimpleEntry {
@@ -359,7 +370,8 @@ function Move-SimpleEntry {
     if ($From -lt 0 -or $To -lt 0 -or $To -ge $script:SimpleEntries.Count -or $From -eq $To) { return }
     $script:SimpleEntries = @(Move-NisListItem -Items $script:SimpleEntries -From $From -To $To)
     Show-SimpleList -SelectIndex $To
-    $lblSimpleDirty.Text = "Ordre modifié, non appliqué."
+    Set-SimpleDirty $true
+    Update-SimpleStatus
 }
 
 function Move-SimpleSelection {
@@ -406,26 +418,31 @@ $lvSimple.Add_DragDrop({
     if ($item -and $target -ge 0) { Move-SimpleEntry -From $item.Index -To $target }
 })
 
+$fontSimpleBtn = New-Object Drawing.Font("Segoe UI", 10)
+
 $btnUp = New-Object Windows.Forms.Button
-$btnUp.Text = "▲ &Monter"
-$btnUp.Location = New-Object Drawing.Point(760, 35)
-$btnUp.Size = New-Object Drawing.Size(200, 32)
-$btnUp.AccessibleName = "Monter l'interface sélectionnée"
+$btnUp.Text = "▲  &Monter"
+$btnUp.Font = $fontSimpleBtn
+$btnUp.Location = New-Object Drawing.Point(735, 90)
+$btnUp.Size = New-Object Drawing.Size(220, 40)
+$btnUp.AccessibleName = "Monter la connexion sélectionnée"
 $btnUp.Add_Click({ Move-SimpleSelection -1; $lvSimple.Focus() | Out-Null })
 $tabSimple.Controls.Add($btnUp)
 
 $btnDown = New-Object Windows.Forms.Button
-$btnDown.Text = "▼ &Descendre"
-$btnDown.Location = New-Object Drawing.Point(760, 72)
-$btnDown.Size = New-Object Drawing.Size(200, 32)
-$btnDown.AccessibleName = "Descendre l'interface sélectionnée"
+$btnDown.Text = "▼  &Descendre"
+$btnDown.Font = $fontSimpleBtn
+$btnDown.Location = New-Object Drawing.Point(735, 136)
+$btnDown.Size = New-Object Drawing.Size(220, 40)
+$btnDown.AccessibleName = "Descendre la connexion sélectionnée"
 $btnDown.Add_Click({ Move-SimpleSelection 1; $lvSimple.Focus() | Out-Null })
 $tabSimple.Controls.Add($btnDown)
 
 $btnForget = New-Object Windows.Forms.Button
-$btnForget.Text = "Oublier (interface absente)"
-$btnForget.Location = New-Object Drawing.Point(760, 109)
-$btnForget.Size = New-Object Drawing.Size(200, 28)
+$btnForget.Text = "Retirer de la liste"
+$btnForget.Location = New-Object Drawing.Point(735, 182)
+$btnForget.Size = New-Object Drawing.Size(220, 30)
+$btnForget.AccessibleName = "Retirer de la liste une connexion qui n'est plus branchée"
 $btnForget.Add_Click({
     if ($lvSimple.SelectedIndices.Count -eq 0) { return }
     $i = $lvSimple.SelectedIndices[0]
@@ -433,10 +450,13 @@ $btnForget.Add_Click({
     if ($e.Present) { return }
     $script:SimpleEntries = @($script:SimpleEntries | Where-Object { -not [object]::ReferenceEquals($_, $e) })
     Write-UiLog "Vue Simple : $($e.Alias) retirée de l'ordre (appliquez pour enregistrer)."
-    $lblSimpleDirty.Text = "Ordre modifié, non appliqué."
+    Set-SimpleDirty $true
     Show-SimpleList -SelectIndex ([Math]::Min($i, $script:SimpleEntries.Count - 1))
 })
 $tabSimple.Controls.Add($btnForget)
+
+$tipSimple = New-Object Windows.Forms.ToolTip
+$tipSimple.SetToolTip($btnForget, "Disponible pour une connexion « Non branchée » (ex. un dock USB que vous n'utilisez plus).")
 
 function Update-SimpleButtons {
     $sel = -1
@@ -446,67 +466,57 @@ function Update-SimpleButtons {
     $btnForget.Enabled = ($sel -ge 0 -and -not $script:SimpleEntries[$sel].Present)
 }
 
-$chkSimpleVirtual = New-Object Windows.Forms.CheckBox
-$chkSimpleVirtual.Text = "Inclure les cartes virtuelles (VPN, Hyper-V...)"
-$chkSimpleVirtual.Location = New-Object Drawing.Point(760, 150)
-$chkSimpleVirtual.Size = New-Object Drawing.Size(210, 34)
-$chkSimpleVirtual.Add_Click({ Update-SimpleView -KeepOrder })
-$tabSimple.Controls.Add($chkSimpleVirtual)
-
-$chkSimpleIPv6 = New-Object Windows.Forms.CheckBox
-$chkSimpleIPv6.Text = "Appliquer aussi l'ordre aux métriques IPv6"
-$chkSimpleIPv6.Location = New-Object Drawing.Point(760, 188)
-$chkSimpleIPv6.Size = New-Object Drawing.Size(210, 34)
-$chkSimpleIPv6.Checked = $true
-$tabSimple.Controls.Add($chkSimpleIPv6)
-
 $btnSimpleRefresh = New-Object Windows.Forms.Button
-$btnSimpleRefresh.Text = "&Rafraîchir"
-$btnSimpleRefresh.Location = New-Object Drawing.Point(760, 230)
-$btnSimpleRefresh.Size = New-Object Drawing.Size(200, 28)
-$btnSimpleRefresh.Add_Click({ Update-SimpleView -KeepOrder; Write-UiLog "Vue Simple rafraîchie." })
+$btnSimpleRefresh.Text = "Actualiser la liste"
+$btnSimpleRefresh.Location = New-Object Drawing.Point(735, 218)
+$btnSimpleRefresh.Size = New-Object Drawing.Size(220, 30)
+$btnSimpleRefresh.Add_Click({ Update-SimpleView -KeepOrder; Write-UiLog "Vue Simple actualisée." })
 $tabSimple.Controls.Add($btnSimpleRefresh)
 
 $lblSimpleDirty = New-Object Windows.Forms.Label
-$lblSimpleDirty.Location = New-Object Drawing.Point(760, 265)
-$lblSimpleDirty.Size = New-Object Drawing.Size(200, 36)
+$lblSimpleDirty.Location = New-Object Drawing.Point(735, 262)
+$lblSimpleDirty.Size = New-Object Drawing.Size(220, 60)
 $lblSimpleDirty.ForeColor = [System.Drawing.Color]::DarkOrange
+$lblSimpleDirty.Font = New-Object Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
 $tabSimple.Controls.Add($lblSimpleDirty)
 
+$lblSimpleStatus = New-Object Windows.Forms.Label
+$lblSimpleStatus.Location = New-Object Drawing.Point(18, 350)
+$lblSimpleStatus.Size = New-Object Drawing.Size(940, 36)
+$lblSimpleStatus.Font = New-Object Drawing.Font("Segoe UI", 11)
+$lblSimpleStatus.AccessibleName = "Connexion utilisée pour Internet"
+$tabSimple.Controls.Add($lblSimpleStatus)
+
 $btnSimpleApply = New-Object Windows.Forms.Button
-$btnSimpleApply.Text = "Appliquer l'ordre"
-$btnSimpleApply.Location = New-Object Drawing.Point(12, 315)
-$btnSimpleApply.Size = New-Object Drawing.Size(240, 45)
+$btnSimpleApply.Text = "Appliquer cet ordre"
+$btnSimpleApply.Location = New-Object Drawing.Point(18, 395)
+$btnSimpleApply.Size = New-Object Drawing.Size(300, 55)
 $btnSimpleApply.BackColor = [System.Drawing.Color]::LightGreen
-$btnSimpleApply.Font = $fontBold
+$btnSimpleApply.Font = New-Object Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
 $btnSimpleApply.Add_Click({
     $states = Get-UiStates -IncludeVirtual
     if ($null -eq $states) { return }
-    # Rafraîchit l'état des interfaces sans changer l'ordre choisi
+    # Rafraîchit l'état des connexions sans changer l'ordre choisi
     $entries = @(Merge-NisOrder -SavedOrder $script:SimpleEntries -States $states -UsableOnly:(-not $chkSimpleVirtual.Checked))
     if ($entries.Count -ne $script:SimpleEntries.Count) {
         $script:SimpleEntries = $entries
         Show-SimpleList
-        Write-UiLog "Vue Simple : la liste des interfaces a changé, vérifiez l'ordre puis appliquez à nouveau."
-        Show-Msg "La liste des interfaces a changé depuis l'affichage. Vérifiez l'ordre puis cliquez à nouveau sur « Appliquer l'ordre »." "Appliquer l'ordre" Warning
+        Write-UiLog "Vue Simple : la liste des connexions a changé, vérifiez l'ordre puis appliquez à nouveau."
+        Show-Msg "Une connexion vient d'apparaître ou de disparaître. Vérifiez l'ordre de la liste puis cliquez à nouveau sur « Appliquer cet ordre »." "Appliquer cet ordre" Warning
         return
     }
     $script:SimpleEntries = $entries
     $plan = @(Get-NisPriorityPlan -Entries $entries)
     $desired = @(ConvertTo-NisDesiredFromPlan -Plan $plan -IncludeIPv6:$chkSimpleIPv6.Checked)
-    $summary = @("Nouvel ordre de priorité :")
+    $summary = @("Votre ordre :")
     foreach ($p in $plan) {
-        if ($p.Present) { $summary += "  $($p.Rank). $($p.Alias) : $($p.InterfaceMetric) + $($p.RouteMetric) = $($p.TotalMetric)" }
-        else { $summary += "  $($p.Rank). $($p.Alias) : absente (rang conservé)" }
+        $note = ''
+        if (-not $p.Present) { $note = ' (non branchée)' } elseif (-not $p.State.IsUp) { $note = ' (non connectée)' }
+        $summary += "   $($p.Rank).  $($p.Alias)$note"
     }
-    if (-not $chkSimpleVirtual.Checked) {
-        $hiddenManual = @($states | Where-Object { -not $_.IsUsable -and -not $_.AutomaticMetric })
-        if ($hiddenManual.Count -gt 0) {
-            $summary += ""
-            $summary += "Note : cartes virtuelles non classées, leur métrique manuelle est conservée : " + (($hiddenManual | ForEach-Object { "$($_.Alias) ($($_.InterfaceMetric))" }) -join ', ') + ". Cochez « Inclure les cartes virtuelles » pour les classer."
-        }
-    }
-    $result = Invoke-UiChange -Desired $desired -CurrentStates $states -Title "Appliquer l'ordre" -Summary ($summary -join "`n")
+    $summary += ""
+    $summary += "Windows utilisera toujours la première connexion disponible de cette liste."
+    $result = Invoke-UiChange -Desired $desired -CurrentStates $states -Title "Appliquer cet ordre" -Summary ($summary -join "`n") -Plain
     if ($result -and $result.Success) {
         try {
             Save-NisOrder -Entries $entries
@@ -514,10 +524,11 @@ $btnSimpleApply.Add_Click({
         } catch {
             Write-UiLog "Ordre appliqué mais non enregistré : $($_.Exception.Message)"
         }
-        $lblSimpleDirty.Text = ""
+        Set-SimpleDirty $false
         Update-SimpleView -KeepOrder
         Update-AdvancedView
-        Write-UiLog ($txtSimpleResult.Text -replace "`r`n", ' | ')
+        Write-UiLog "Vue Simple : $($lblSimpleStatus.Text)"
+        Show-Msg "C'est fait.`n`n$($lblSimpleStatus.Text)" "Appliquer cet ordre"
     } elseif ($result) {
         Update-SimpleView -KeepOrder
         Update-AdvancedView
@@ -526,14 +537,19 @@ $btnSimpleApply.Add_Click({
 $tabSimple.Controls.Add($btnSimpleApply)
 
 function Invoke-UiReset {
+    param([switch]$Plain)
     $states = Get-UiStates -IncludeVirtual
     if ($null -eq $states) { return $false }
     $desired = @(Get-NisResetDesired -States $states)
-    $result = Invoke-UiChange -Desired $desired -CurrentStates $states -Title "Réinitialiser" -Summary "Toutes les interfaces repassent en métrique automatique (IPv4 et IPv6), les métriques de route par défaut reviennent à 0, et l'ordre sauvegardé de la vue Simple est oublié. Windows gère à nouveau les priorités."
+    if ($Plain) {
+        $result = Invoke-UiChange -Desired $desired -CurrentStates $states -Title "Revenir au choix automatique" -Summary "Windows choisira de nouveau lui-même la connexion à utiliser, et votre ordre sera oublié." -Plain
+    } else {
+        $result = Invoke-UiChange -Desired $desired -CurrentStates $states -Title "Réinitialiser" -Summary "Toutes les interfaces repassent en métrique automatique (IPv4 et IPv6), les métriques de route par défaut reviennent à 0, et l'ordre sauvegardé de la vue Simple est oublié. Windows gère à nouveau les priorités."
+    }
     if ($result -and $result.Success) {
         try { Clear-NisOrder } catch { Write-UiLog "Ordre sauvegardé non supprimé : $($_.Exception.Message)" }
         Write-UiLog "Réinitialisation terminée, ordre sauvegardé oublié."
-        $lblSimpleDirty.Text = ""
+        Set-SimpleDirty $false
         Update-SimpleView
         Update-AdvancedView -DiscardEdits
         return $true
@@ -545,44 +561,53 @@ function Invoke-UiReset {
 }
 
 $btnSimpleReset = New-Object Windows.Forms.Button
-$btnSimpleReset.Text = "Réinitialiser (automatique)"
-$btnSimpleReset.Location = New-Object Drawing.Point(262, 315)
-$btnSimpleReset.Size = New-Object Drawing.Size(240, 45)
-$btnSimpleReset.BackColor = [System.Drawing.Color]::LightCoral
-$btnSimpleReset.Font = $fontBold
-$btnSimpleReset.Add_Click({ [void](Invoke-UiReset) })
+$btnSimpleReset.Text = "Revenir au choix automatique de Windows"
+$btnSimpleReset.Location = New-Object Drawing.Point(330, 395)
+$btnSimpleReset.Size = New-Object Drawing.Size(300, 55)
+$btnSimpleReset.BackColor = [System.Drawing.Color]::MistyRose
+$btnSimpleReset.Font = $fontSimpleBtn
+$btnSimpleReset.Add_Click({ [void](Invoke-UiReset -Plain) })
 $tabSimple.Controls.Add($btnSimpleReset)
 
-$tabSimple.Controls.Add((New-PingButton -X 512 -Y 315 -W 235 -H 45 -Text "Tester (ping 8.8.8.8)"))
-
-$lblSimpleResult = New-Object Windows.Forms.Label
-$lblSimpleResult.Text = "Résultat effectif :"
-$lblSimpleResult.Location = New-Object Drawing.Point(12, 370)
-$lblSimpleResult.AutoSize = $true
-$tabSimple.Controls.Add($lblSimpleResult)
-
-$txtSimpleResult = New-Object Windows.Forms.TextBox
-$txtSimpleResult.Multiline = $true
-$txtSimpleResult.ReadOnly = $true
-$txtSimpleResult.ScrollBars = "Vertical"
-$txtSimpleResult.Location = New-Object Drawing.Point(12, 390)
-$txtSimpleResult.Size = New-Object Drawing.Size(948, 70)
-$txtSimpleResult.BackColor = [System.Drawing.Color]::White
-$txtSimpleResult.AccessibleName = "Résultat effectif"
-$tabSimple.Controls.Add($txtSimpleResult)
+$btnSimplePing = New-PingButton -X 642 -Y 395 -W 313 -H 55 -Text "Vérifier la connexion Internet"
+$btnSimplePing.Font = $fontSimpleBtn
+$tabSimple.Controls.Add($btnSimplePing)
 
 # ===========================================================================
 # VUE AVANCÉ : tous les paramètres, interface par interface
 # ===========================================================================
 
 $chkAdvAll = New-Object Windows.Forms.CheckBox
-$chkAdvAll.Text = "Afficher toutes les cartes (virtuelles comprises)"
+$chkAdvAll.Text = "Toutes les cartes (virtuelles comprises)"
 $chkAdvAll.Location = New-Object Drawing.Point(12, 8)
 $chkAdvAll.AutoSize = $true
 $chkAdvAll.Add_Click({ Update-AdvancedView })
 $tabAdv.Controls.Add($chkAdvAll)
 
-$tabAdv.Controls.Add((New-InfoButton -X 330 -Y 7 -Title "Métriques - Information" -Text $helpMetrics))
+$tabAdv.Controls.Add((New-InfoButton -X 262 -Y 7 -Title "Métriques - Information" -Text $helpMetrics))
+
+# Options de la vue Simple (réglages techniques, volontairement absents de la vue Simple)
+$lblSimpleOpts = New-Object Windows.Forms.Label
+$lblSimpleOpts.Text = "Vue Simple :"
+$lblSimpleOpts.Location = New-Object Drawing.Point(305, 10)
+$lblSimpleOpts.AutoSize = $true
+$lblSimpleOpts.Font = New-Object Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$tabAdv.Controls.Add($lblSimpleOpts)
+
+$chkSimpleVirtual = New-Object Windows.Forms.CheckBox
+$chkSimpleVirtual.Text = "inclure les cartes virtuelles"
+$chkSimpleVirtual.Location = New-Object Drawing.Point(385, 8)
+$chkSimpleVirtual.AutoSize = $true
+$chkSimpleVirtual.Add_Click({ Update-SimpleView -KeepOrder })
+$tabAdv.Controls.Add($chkSimpleVirtual)
+
+$chkSimpleIPv6 = New-Object Windows.Forms.CheckBox
+$chkSimpleIPv6.Text = "même ordre pour IPv6"
+$chkSimpleIPv6.Location = New-Object Drawing.Point(580, 8)
+$chkSimpleIPv6.AutoSize = $true
+$chkSimpleIPv6.Checked = $true
+$tabAdv.Controls.Add($chkSimpleIPv6)
+$tabAdv.Controls.Add((New-InfoButton -X 740 -Y 7 -Title "Vue Simple - fonctionnement" -Text "La vue Simple transforme l'ordre de la liste en métriques, pour toutes les connexions classées :`n`n   rang 1 : interface 10 + route 0  = total 10`n   rang 2 : interface 20 + route 10 = total 30`n   rang 3 : interface 30 + route 20 = total 50`n   ...`n`nLes totaux sont strictement croissants et espacés de 20 : la 1re connexion disponible est toujours utilisée.`nUne connexion non connectée ou non branchée garde son rang.`n`n- inclure les cartes virtuelles : ajoute VPN, Hyper-V/WSL... à la liste de la vue Simple.`n- même ordre pour IPv6 : la métrique d'interface IPv6 reçoit la même valeur (10, 20, 30...)."))
 
 $btnAdvRefresh = New-Object Windows.Forms.Button
 $btnAdvRefresh.Text = "Rafraîchir"
@@ -624,14 +649,14 @@ function Add-GridColumn {
 }
 Add-GridColumn -Name 'Id' -Header 'ID' -Width 38 -ReadOnly
 Add-GridColumn -Name 'Interface' -Header 'Interface' -Width 165 -ReadOnly
-Add-GridColumn -Name 'Etat' -Header 'État' -Width 85 -ReadOnly
+Add-GridColumn -Name 'Etat' -Header 'État' -Width 100 -ReadOnly
 Add-GridColumn -Name 'Auto' -Header 'Métrique auto' -Width 70 -Check
 Add-GridColumn -Name 'IfMetric' -Header 'Métrique interface (IPv4)' -Width 95
 Add-GridColumn -Name 'RouteMetric' -Header 'Métrique route 0.0.0.0/0' -Width 95
 Add-GridColumn -Name 'Total' -Header 'Total effectif' -Width 75 -ReadOnly
 Add-GridColumn -Name 'IPv6' -Header 'IPv6 activé' -Width 65 -Check
 Add-GridColumn -Name 'IPv6Metric' -Header 'Métrique IPv6 (vide = auto)' -Width 105
-Add-GridColumn -Name 'Modif' -Header 'Modifié' -Width 130 -ReadOnly
+Add-GridColumn -Name 'Modif' -Header 'Modifié' -Width 115 -ReadOnly
 $tabAdv.Controls.Add($dgv)
 
 $script:AdvLoading = $false
@@ -906,7 +931,19 @@ if ($Apercu) {
     $dgv.ReadOnly = $true
 }
 
+# Le journal (technique) n'est affiché qu'avec la vue Avancé ; la fenêtre est plus compacte en vue Simple
+function Set-ViewLayout {
+    $isAdv = ($tabs.SelectedTab -eq $tabAdv)
+    $grpLog.Visible = $isAdv
+    if ($isAdv) { $form.ClientSize = New-Object Drawing.Size(1000, 640) } else { $form.ClientSize = New-Object Drawing.Size(1000, 515) }
+}
+$tabs.Add_SelectedIndexChanged({
+    Set-ViewLayout
+    if ($tabs.SelectedTab -eq $tabSimple) { Update-SimpleView -KeepOrder }
+})
+
 if ($Vue -eq 'Avance') { $tabs.SelectedTab = $tabAdv } else { $tabs.SelectedTab = $tabSimple }
+Set-ViewLayout
 
 $form.Add_Shown({
     Write-UiLog "Démarrage$(if ($Apercu) { ' en mode aperçu (lecture seule)' })."
